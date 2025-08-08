@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Flippin</title>
+  <style>
+    * { box-sizing: border-box; margin:0; padding:0; }
+    body { font-family:'Calibri',sans-serif; font-size:14px; background:#ffbba7; color:#111; padding:1rem; display:flex; flex-direction:column; align-items:center; }
+    h1 { font-size:1.5rem; margin-bottom:1rem; }
+    #nameForm { background:#fff; padding:.75rem; border-radius:8px; width:100%; max-width:320px; margin-bottom:1rem; text-align:center; }
+    #nameForm input { padding:.5rem; font-size:1rem; width:40%; margin-right:.5rem; }
+    #startBtn { padding:.5rem 1rem; background:#2b6ef6; color:#fff; border:none; border-radius:6px; font-size:1rem; cursor:pointer; }
+    #timer { font-size:1.2rem; margin-bottom:1rem; }
+    .game-container { display:none; flex-direction:column; align-items:center; width:100%; max-width:480px; }
+    .players-info { display:flex; justify-content:space-between; width:100%; margin-bottom:.75rem; }
+    .player-box { background:#fff; padding:.5rem; border-radius:6px; flex:1; text-align:center; font-size:.9rem; margin:0 .25rem; }
+    .player-box.turn { outline:2px solid #f39c12; }
+    #pairsFound { margin-bottom:.75rem; font-size:1rem; }
+    .board { display:grid; grid-template-columns:repeat(auto-fit,minmax(60px,1fr)); gap:.5rem; width:100%; margin-bottom:.75rem; }
+    .card { position:relative; width:100%; padding-top:100%; background:#FFF0E0; border-radius:6px; cursor:pointer; perspective:800px; }
+    .card-inner { position:absolute; inset:0; transition:transform 300ms; transform-style:preserve-3d; }
+    .card.revealed .card-inner { transform:rotateY(180deg); cursor:default; }
+    .face,.back { position:absolute; inset:0; backface-visibility:hidden; border-radius:6px; display:flex; align-items:center; justify-content:center; }
+    .back, .face { background:#FFF0E0; }
+    .face { transform:rotateY(180deg); flex-direction:column; }
+    .face .emoji { font-size:2.5rem; line-height:1; }
+    .animal-name { font-size:.8rem; margin-top:.25rem; text-transform:capitalize; }
+    #log { width:100%; max-height:200px; overflow-y:auto; margin-top:1rem; background:#fff; padding:.5rem; border-radius:6px; }
+    .log-item { font-size:.85rem; margin-bottom:.25rem; }
+  </style>
+</head>
+<body>
+  <h1>Flippin</h1>
+  <div id="nameForm">
+    <input type="text" id="p1Name" placeholder="Player 1 Name">
+    <input type="text" id="p2Name" placeholder="Player 2 Name">
+    <button id="startBtn">Start</button>
+  </div>
+  <div id="timer">Time: 05:00</div>
+  <div class="game-container" id="game">
+    <div class="players-info" id="playersInfo"></div>
+    <div id="pairsFound">Pairs found: 0 / 10</div>
+    <div class="board" id="board"></div>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const BASE_QUESTIONS=5, PAIRS=10, FLIP_DELAY=800;
+    const ANIMALS=[{name:'lion',emoji:'🦁'},{name:'elephant',emoji:'🐘'},{name:'fox',emoji:'🦊'},{name:'frog',emoji:'🐸'},{name:'cat',emoji:'🐱'},{name:'dog',emoji:'🐶'},{name:'panda',emoji:'🐼'},{name:'rabbit',emoji:'🐰'},{name:'tiger',emoji:'🐯'},{name:'bear',emoji:'🐻'}];
+    let cards=[], flipped=[], lockBoard=false, currentPlayer=0, players=[], timerInterval, remainingTime=300;
+    const boardEl=document.getElementById('board'), logEl=document.getElementById('log'), playersInfoEl=document.getElementById('playersInfo'), pairsFoundEl=document.getElementById('pairsFound'), timerEl=document.getElementById('timer'), nameForm=document.getElementById('nameForm'), startBtn=document.getElementById('startBtn'), gameEl=document.getElementById('game');
+
+    function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+    function questionsLeft(p){return BASE_QUESTIONS+p.extra-p.asked;}
+    function log(msg){const d=document.createElement('div');d.className='log-item';d.textContent=msg;logEl.prepend(d);}
+
+    function setupGame(){
+      const name1=document.getElementById('p1Name').value.trim()||'Player 1';
+      const name2=document.getElementById('p2Name').value.trim()||'Player 2';
+      players=[{name:name1,matches:0,asked:0,extra:0,prev:0},{name:name2,matches:0,asked:0,extra:0,prev:0}];
+      cards=[];ANIMALS.forEach((a,i)=>{cards.push({...a,id:i,revealed:false,matched:false});cards.push({...a,id:i,revealed:false,matched:false});});
+      shuffle(cards);flipped=[];lockBoard=false;currentPlayer=0;
+      renderPlayers();renderBoard();logEl.innerHTML='';pairsFoundEl.textContent=`Pairs found: 0 / ${PAIRS}`;
+      remainingTime=300; updateTimerDisplay(); startTimer();
+      nameForm.style.display='none';gameEl.style.display='flex';log(`${players[0].name} begins`);
+    }
+
+    function startTimer(){
+      clearInterval(timerInterval);
+      timerInterval=setInterval(()=>{
+        remainingTime--;
+        updateTimerDisplay();
+        if(remainingTime<=0){clearInterval(timerInterval); endGame("Time's up!");}
+      },1000);
+    }
+    function updateTimerDisplay(){const m=String(Math.floor(remainingTime/60)).padStart(2,'0'), s=String(remainingTime%60).padStart(2,'0');timerEl.textContent=`Time: ${m}:${s}`;}
+
+    function renderPlayers(){
+      playersInfoEl.innerHTML='';
+      players.forEach((p,i)=>{
+        const div=document.createElement('div');
+        div.className='player-box'+(i===currentPlayer?' turn':'');
+        div.innerHTML=`<strong>${p.name}</strong><br>Matches: ${p.matches}<br>Q left: ${questionsLeft(p)}`;
+        playersInfoEl.appendChild(div);
+      });
+    }
+
+    function renderBoard(){
+      boardEl.innerHTML='';
+      cards.forEach((c,i)=>{
+        const card=document.createElement('div');card.className='card'+(c.revealed||c.matched?' revealed':'');
+        card.innerHTML=`<div class="card-inner"><div class="back"></div><div class="face"><span class="emoji">${c.emoji}</span><div class="animal-name">${c.name}</div></div></div>`;
+        boardEl.appendChild(card);
+        if(!c.revealed&&!c.matched){card.addEventListener('click',()=>flipCard(i));}
+      });
+    }
+
+    function flipCard(i){
+      if(lockBoard||cards[i].revealed||cards[i].matched) return;
+      cards[i].revealed=true;flipped.push(i);renderBoard();
+      if(flipped.length===2){lockBoard=true;const[a,b]=flipped; if(cards[a].id===cards[b].id){handleMatch(a,b);}else{setTimeout(handleNoMatch,FLIP_DELAY);} }
+    }
+
+    function handleMatch(a,b){
+      const p=players[currentPlayer];p.matches++;if(p.matches%3===0 && p.matches!==p.prev){p.extra++;log(`${p.name} earned an extra question at ${p.matches} matches`);p.prev=p.matches;}
+      cards[a].matched=cards[b].matched=true;renderPlayers();log(`${p.name} found ${cards[a].name}`);pairsFoundEl.textContent=`Pairs found: ${players[0].matches+players[1].matches} / ${PAIRS}`;
+      pauseTimer();questionAskFlow(currentPlayer);
+    }
+
+    function handleNoMatch(){
+      cards[flipped[0]].revealed=cards[flipped[1]].revealed=false;flipped=[];lockBoard=false;
+      currentPlayer=1-currentPlayer;renderPlayers();log(`No match — ${players[currentPlayer].name}'s turn`);renderBoard();
+    }
+
+    function pauseTimer(){clearInterval(timerInterval);}
+    function resumeTimer(){startTimer();}
+
+    async function questionAskFlow(idx){
+      const asker=players[idx], answerer=players[1-idx];
+      const qLeft=questionsLeft(asker);
+      let qText = '';
+      if(qLeft>0) qText = prompt(`${asker.name}, ask a question to ${answerer.name} (left: ${qLeft})`)||'';
+      log(qText?`${asker.name} asked: "${qText}"`:`${asker.name} skipped asking`);
+      if(qText) asker.asked++;
+      renderPlayers();
+
+      let aText = prompt(`${answerer.name}, answer the question:`)||'';
+      log(aText?`${answerer.name} answered: "${aText}"`:`${answerer.name} skipped answering`);
+      renderPlayers();
+
+      flipped=[];lockBoard=false;
+      if(players[0].matches+players[1].matches===PAIRS) return endGame("All pairs found!");
+      resumeTimer();
+    }
+
+    function endGame(msg){
+      pauseTimer();alert(msg);
+      const winner=players[0].matches>players[1].matches?players[0].name:players[1].matches>players[0].matches?players[1].name:"It's a tie!";
+      log(`Game over! Winner: ${winner}`);
+    }
+
+    startBtn.addEventListener('click', setupGame);
+  </script>
+</body>
+</html>
