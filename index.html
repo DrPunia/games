@@ -29,13 +29,10 @@
 <body>
   <h1>Flippin (Real-time)</h1>
 
-  <div class="controls">
-    <input id="nameInput" placeholder="Your name" />
-    <input id="roomInput" placeholder="Room id (or leave blank to create)" />
-    <button id="btnCreate">Create Room</button>
-    <button id="btnJoin">Join Room</button>
-    <div id="status" style="margin-top:8px;color:#444"></div>
-  </div>
+const socket = io(SOCKET_SERVER_URL);
+socket.on('roomAssigned', ({ roomId }) => {
+  console.log('Assigned to default room:', roomId);
+});
 
   <div id="timer">Time: 05:00</div>
 
@@ -44,6 +41,7 @@
     <div id="pairsFound" style="margin:8px 0">Pairs found: 0 / 10</div>
     <div class="board" id="board"></div>
     <div id="log"></div>
+    <button id="btnRematch">Rematch</button>
   </div>
 
   <!-- Socket.IO client (CDN) -->
@@ -69,6 +67,12 @@
     const logEl = document.getElementById('log');
     const timerEl = document.getElementById('timer');
     const pairsFoundEl = document.getElementById('pairsFound');
+    const btnRematch = document.getElementById('btnRematch');
+btnRematch.onclick = () => {
+  socket.emit('rematch', {}, res => {
+    if (!res.ok) alert('Cannot rematch yet: ' + res.error);
+  });
+};
 
     let myName = '';
     let myRoom = '';
@@ -80,38 +84,8 @@
       logEl.prepend(d);
     }
 
-    // UI actions
-    btnCreate.onclick = () => {
-      myName = (nameInput.value || 'Player 1').trim();
-      socket.emit('createRoom', (res) => {
-        if (res && res.roomId) {
-          myRoom = res.roomId;
-          // after create, join as created player already handled server-side; ask user to share room id
-          statusEl.textContent = `Room created: ${myRoom}. Share this id with opponent.`;
-          // we are already in room but server created only player1. We need to update name (optional)
-          socket.emit('joinRoom', { roomId: myRoom, name: myName }, (r) => {
-            // server accepts second join as well; but for created room we might get returned state
-            // show game area: actual state will arrive via 'state' event
-          });
-        } else {
-          statusEl.textContent = 'Error creating room';
-        }
-      });
-    };
-
-    btnJoin.onclick = () => {
-      myName = (nameInput.value || 'Player').trim();
-      const roomId = (roomInput.value || '').trim();
-      if (!roomId) { statusEl.textContent = 'Enter a room id to join'; return; }
-      myRoom = roomId;
-      socket.emit('joinRoom', { roomId: myRoom, name: myName }, (res) => {
-        if (res && res.error) {
-          statusEl.textContent = 'Join error: ' + res.error;
-        } else {
-          statusEl.textContent = `Joined room ${myRoom}`;
-        }
-      });
-    };
+    
+    
 
     // When server sends state, replace UI
     socket.on('state', (s) => {
