@@ -51,6 +51,10 @@
   <script>
     // ====== CONFIG ======
     const SOCKET_SERVER_URL = 'https://flippin-server.onrender.com';
+    socket.on('connect_error', err => {
+  console.error('Connection error:', err);
+  alert('Unable to connect to server — check the console for details.');
+});
     const socket = io(SOCKET_SERVER_URL, { transports: ['websocket','polling'] });
 
     // ====== UI refs ======
