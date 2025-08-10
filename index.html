@@ -29,162 +29,114 @@
 <body>
   <h1>Flippin (Real-time)</h1>
 
-const socket = io(SOCKET_SERVER_URL);
-socket.on('roomAssigned', ({ roomId }) => {
-  console.log('Assigned to default room:', roomId);
-});
-
-  <div id="timer">Time: 05:00</div>
+  <div id="status">Connecting…</div>
+  <div id="timer">Time: 03:00</div>
 
   <div class="game-container" id="game" style="display:none">
     <div class="players" id="players"></div>
-    <div id="pairsFound" style="margin:8px 0">Pairs found: 0 / 10</div>
+    <div id="pairsFound">Pairs found: 0 / 10</div>
     <div class="board" id="board"></div>
     <div id="log"></div>
     <button id="btnRematch">Rematch</button>
   </div>
 
-  <!-- Socket.IO client (CDN) -->
   <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
   <script>
-    // ====== CONFIG ======
     const SOCKET_SERVER_URL = 'https://flippin-server.onrender.com';
-    socket.on('connect_error', err => {
-  console.error('Connection error:', err);
-  alert('Unable to connect to server — check the console for details.');
-});
     const socket = io(SOCKET_SERVER_URL, { transports: ['websocket','polling'] });
 
-    // ====== UI refs ======
-    const nameInput = document.getElementById('nameInput');
-    const roomInput = document.getElementById('roomInput');
-    const btnCreate = document.getElementById('btnCreate');
-    const btnJoin = document.getElementById('btnJoin');
-    const statusEl = document.getElementById('status');
-    const gameEl = document.getElementById('game');
-    const playersEl = document.getElementById('players');
-    const boardEl = document.getElementById('board');
-    const logEl = document.getElementById('log');
-    const timerEl = document.getElementById('timer');
-    const pairsFoundEl = document.getElementById('pairsFound');
+    socket.on('connect_error', err => {
+      console.error('Connection error:', err);
+      alert('Cannot connect to server.');
+      document.getElementById('status').textContent = 'Connection error';
+    });
+
+    socket.on('connect', () => {
+      document.getElementById('status').textContent = 'Connected — waiting for opponent…';
+    });
+
     const btnRematch = document.getElementById('btnRematch');
-btnRematch.onclick = () => {
-  socket.emit('rematch', {}, res => {
-    if (!res.ok) alert('Cannot rematch yet: ' + res.error);
-  });
-};
+    btnRematch.onclick = () => {
+      socket.emit('rematch', {}, res => {
+        if (!res.ok && res.error) alert('Rematch failed: ' + res.error);
+      });
+    };
 
-    let myName = '';
-    let myRoom = '';
-    let myPlayerIndex = -1; // 0 or 1 as server assigns
-    let state = null;
-
-    function log(msg){
-      const d = document.createElement('div'); d.className='log-item'; d.textContent = msg;
-      logEl.prepend(d);
-    }
-
-    
-    
-
-    // When server sends state, replace UI
-    socket.on('state', (s) => {
-      state = s;
-      // Find my index
-      if (s && s.players){
-        myPlayerIndex = s.players.findIndex(p => p.name === myName);
-        // if name match fails (names not unique) set 0/1 by socket id info is not available here;
-        // Show players and stats:
-        playersEl.innerHTML = '';
-        s.players.forEach((p, i) => {
-          const el = document.createElement('div'); el.className='player';
-          if (i === s.currentPlayer) el.style.outline='2px solid #f39c12';
-          el.innerHTML = `<strong>${p.name}</strong><br>Matches: ${p.matches}<br>Q left: ${5 + (p.extra||0) - (p.asked||0)}`;
-          playersEl.appendChild(el);
-        });
-      }
-      renderBoard(s.cards || []);
-      // update pairs found
-      const matches = (s.players || []).reduce((sum,p)=> sum + (p.matches||0), 0);
-      pairsFoundEl.textContent = `Pairs found: ${matches} / 10`;
-      // show timer state if provided
-      if (s.timer) timerEl.textContent = `Time: ${formatTime(s.timer.remaining)}`;
-      // show log
-      if (s.log && s.log.length){
-        // render top 6
-        logEl.innerHTML = '';
-        s.log.slice(0,12).forEach(item => {
-          log(item.type === 'q' ? `${item.by} asked: ${item.text}` : item.type === 'a' ? `${item.by} answered: ${item.text}` : item.text);
-        });
-      }
-      gameEl.style.display = 'flex';
+    socket.on('roomAssigned', ({ roomId }) => {
+      document.getElementById('status').textContent = `In default room`;
+      console.log('Assigned to default room:', roomId);
     });
 
-    socket.on('timer', remaining => {
-      timerEl.textContent = `Time: ${formatTime(remaining)}`;
+    socket.on('state', renderState); // handle UI updates
+    socket.on('timer', secs => {
+      document.getElementById('timer').textContent = `Time: ${formatTime(secs)}`;
     });
-    socket.on('timerPaused', ()=> log('Timer paused'));
-    socket.on('timeUp', ()=> { alert('Time is up!'); });
+
+    socket.on('timerPaused', () => log('Timer paused'));
+    socket.on('timeUp', () => alert('Time is up!'));
+
     socket.on('askQuestion', ({ remaining }) => {
-      // server tells this player to ask
-      pauseLocalTimer(); // precaution
-      const q = prompt(`You got to ask a question (left: ${remaining}). Type question:`);
-      if (q) socket.emit('askQuestion', { roomId: myRoom, text: q });
-      else socket.emit('askQuestion', { roomId: myRoom, text: '' });
+      const q = prompt(`Ask a question (remaining: ${remaining}):`);
+      socket.emit('askQuestion', { text: q || '' });
     });
 
     socket.on('questionForAnswer', ({ from, text }) => {
-      pauseLocalTimer();
       const ans = prompt(`${from} asks: "${text}". Your answer:`);
-      socket.emit('answerQuestion', { roomId: myRoom, text: ans || '' });
+      socket.emit('answerQuestion', { text: ans || '' });
     });
 
     socket.on('questionAnswered', ({ by, text }) => {
       log(`${by} answered: ${text}`);
     });
 
-    socket.on('noQuestions', () => alert('No questions remaining'));
+    function renderState(s) {
+      document.getElementById('status').textContent = '';
+      document.getElementById('game').style.display = 'flex';
 
-    // Render board function: shows emoji only when revealed or matched
-    function renderBoard(cards){
+      const playersEl = document.getElementById('players');
+      playersEl.innerHTML = '';
+      s.players.forEach((p,i) => {
+        const div = document.createElement('div');
+        div.className = 'player';
+        if (i === s.currentPlayer) div.style.outline = '2px solid #f39c12';
+        div.innerHTML = `<strong>${p.name}</strong><br>Matches: ${p.matches}<br>Q left: ${5 + (p.extra||0) - (p.asked||0)}`;
+        playersEl.appendChild(div);
+      });
+
+      document.getElementById('pairsFound').textContent = `Pairs found: ${(s.players[0]?.matches||0) + (s.players[1]?.matches||0)} / 10`;
+
+      const boardEl = document.getElementById('board');
       boardEl.innerHTML = '';
-      cards.forEach((c, idx) => {
+      s.cards.forEach((c, idx) => {
         const card = document.createElement('div');
-        card.className = 'card' + ((c.revealed || c.matched) ? ' revealed' : '');
-        card.innerHTML = `<div class="card-inner"><div class="back"></div><div class="face"><div class="emoji">${c.emoji}</div><div class="name">${c.animal}</div></div></div>`;
-        boardEl.appendChild(card);
-        if (!c.revealed && !c.matched){
+        card.className = 'card' + ((c.revealed||c.matched) ? ' revealed' : '');
+        card.innerHTML = `<div class="card-inner"><div class="back"></div><div class="face"><div class="emoji">${c.emoji}</div></div></div>`;
+        if (!c.revealed && !c.matched) {
           card.addEventListener('click', () => {
-            // emit flip to server
-            socket.emit('flip', { roomId: myRoom, idx }, (res) => {
-              if (res && res.error) {
-                // e.g., not your turn
-                log('Flip rejected: ' + res.error);
-              }
-            });
+            socket.emit('flip', { idx }, res => { if (res?.error) log(res.error); });
           });
         }
+        boardEl.appendChild(card);
       });
+
+      const logEl = document.getElementById('log');
+      logEl.innerHTML = '';
+      (s.log || []).slice(0, 12).forEach(item => { log(item.text); });
     }
 
-    // Utility
-    function formatTime(sec){
-      const m = String(Math.floor(sec/60)).padStart(2,'0'), s = String(sec%60).padStart(2,'0');
+    function log(msg) {
+      const d = document.createElement('div');
+      d.className = 'log-item';
+      d.textContent = msg;
+      document.getElementById('log').prepend(d);
+    }
+
+    function formatTime(sec) {
+      const m = String(Math.floor(sec/60)).padStart(2,'0');
+      const s = String(sec%60).padStart(2,'0');
       return `${m}:${s}`;
     }
-
-    // Local pause/resume placeholders (server decides real timer)
-    function pauseLocalTimer(){ /* UI already paused by server events, no-op */ }
-    function resumeLocalTimer(){ /* UI resumes via server 'timer' events */ }
-
-    // connection errors
-    socket.on('connect_error', (err) => {
-      statusEl.textContent = 'Socket connect error';
-      console.error(err);
-    });
-
-    // show initial message
-    statusEl.textContent = 'Enter name and create or join a room.';
   </script>
 </body>
+
 </html>
