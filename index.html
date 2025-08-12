@@ -117,7 +117,7 @@
 
     playAgainBtn.onclick = () => {
         winnerModal.classList.add('hidden');
-        btnRematch.click(); // Reuse rematch logic
+        btnRematch.click();
     };
 
     // --- Socket Logic ---
@@ -136,7 +136,6 @@
             statusDiv.textContent = 'Connected — waiting for opponent…';
         });
 
-        // --- Game Event Handlers ---
         socket.on('state', renderState);
         socket.on('timer', secs => {
             document.getElementById('timer').textContent = `Time: ${formatTime(secs)}`;
@@ -150,9 +149,15 @@
             winnerModal.classList.add('hidden');
         });
 
+        // CORRECTED: The listener now handles the payload correctly
         socket.on('askQuestion', ({ remaining }) => {
-            const q = prompt(`You found a match! Ask a question (remaining: ${remaining}):`);
-            socket.emit('askQuestion', { text: q || '' });
+            if (remaining > 0) {
+                const q = prompt(`You found a match! Ask a question (${remaining} left):`);
+                socket.emit('askQuestion', { text: q || '' });
+            } else {
+                alert("You have no questions left!");
+                socket.emit('answerQuestion', { text: '(skipped)' }); // Must answer to resume timer
+            }
         });
 
         socket.on('questionForAnswer', ({ from, text }) => {
@@ -172,7 +177,8 @@
             const div = document.createElement('div');
             div.className = 'player';
             if (i === s.currentPlayer) div.classList.add('current-turn');
-            div.innerHTML = `<strong>${p.name}</strong><br>Matches: ${p.matches}`;
+            // Display questions asked
+            div.innerHTML = `<strong>${p.name}</strong><br>Matches: ${p.matches}<br>Questions Asked: ${p.asked || 0}/5`;
             playersEl.appendChild(div);
         });
 
