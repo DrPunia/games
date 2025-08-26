@@ -65,13 +65,21 @@
         text-align: center; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
     }
     #winner-text { margin-bottom: 1.5rem; font-size: 2rem; color: #333; }
+    <!-- New: Game Mode Modal -->
+<div id="game-mode-modal" class="hidden">
+    <div class="modal-content">
+        <h2 id="game-mode-text">Play without questions?</h2>
+        <p>If either player chooses yes, questions will be disabled for this match.</p>
+        <button id="mode-yes-btn">Yes</button>
+        <button id="mode-no-btn">No, keep questions</button>
+    </div>
+</div>
 </style>
 </head>
 <body>
     
     <div id="login-screen">
         <h1>Flippin'</h1>
-        <h2>Enter Your Name</h2>
         <input type="text" id="name-input" placeholder="Your Name" maxlength="15">
         <button id="join-game-btn">Join Game</button>
     </div>
@@ -102,6 +110,7 @@
 <script>
     const SOCKET_SERVER_URL = 'https://flippin-server.onrender.com';
     let socket;
+    let gameHasQuestions = true; // Default to true
 
     // --- DOM Elements ---
     const loginScreen = document.getElementById('login-screen');
@@ -112,6 +121,10 @@
     const btnRematch = document.getElementById('btnRematch');
     const winnerModal = document.getElementById('winner-modal');
     const playAgainBtn = document.getElementById('play-again-btn');
+    // New elements for game mode
+    const gameModeModal = document.getElementById('game-mode-modal');
+    const modeYesBtn = document.getElementById('mode-yes-btn');
+    const modeNoBtn = document.getElementById('mode-no-btn');
 
     // --- Event Listeners ---
     joinButton.addEventListener('click', () => {
@@ -122,6 +135,7 @@
         }
         loginScreen.classList.add('hidden');
         statusDiv.classList.remove('hidden');
+        statusDiv.textContent = 'Connecting…';
         connectToServer(playerName);
     });
     
@@ -132,6 +146,18 @@
     playAgainBtn.onclick = () => {
         winnerModal.classList.add('hidden');
         btnRematch.click();
+    };
+
+    modeYesBtn.onclick = () => {
+        socket.emit('setGameMode', { mode: 'no-questions' });
+        gameModeModal.classList.add('hidden');
+        statusDiv.textContent = 'Waiting for opponent…';
+    };
+
+    modeNoBtn.onclick = () => {
+        socket.emit('setGameMode', { mode: 'questions' });
+        gameModeModal.classList.add('hidden');
+        statusDiv.textContent = 'Waiting for opponent…';
     };
 
     // --- Socket Logic ---
@@ -147,10 +173,19 @@
         });
 
         socket.on('connect', () => {
-            statusDiv.textContent = 'Connected — waiting for opponent…';
+            // Show the game mode choice modal upon connecting
+            gameModeModal.classList.remove('hidden');
+            statusDiv.classList.remove('hidden');
+            statusDiv.textContent = 'Connected!';
         });
 
+        // --- Game Event Handlers ---
         socket.on('state', renderState);
+
+        socket.on('gameModeUpdated', ({ mode }) => {
+            gameHasQuestions = (mode === 'questions');
+        });
+
         socket.on('timer', secs => {
             document.getElementById('timer').textContent = `Time: ${formatTime(secs)}`;
         });
@@ -168,15 +203,18 @@
 
         socket.on('gameReset', () => {
             winnerModal.classList.add('hidden');
+            gameModeModal.classList.remove('hidden'); // Ask again on rematch
         });
 
         socket.on('askQuestion', ({ remaining }) => {
-            if (remaining > 0) {
-                const q = prompt(`You found a match! Ask a question (${remaining} left):`);
-                socket.emit('askQuestion', { text: q || '' });
-            } else {
-                alert("You have no questions left!");
-                socket.emit('answerQuestion', { text: '(skipped)' });
+            if (gameHasQuestions) { // Only ask if the mode is correct
+                if (remaining > 0) {
+                    const q = prompt(`You found a match! Ask a question (${remaining} left):`);
+                    socket.emit('askQuestion', { text: q || '' });
+                } else {
+                    alert("You have no questions left!");
+                    socket.emit('answerQuestion', { text: '(skipped)' });
+                }
             }
         });
 
@@ -189,6 +227,7 @@
     // --- Rendering Logic ---
     function renderState(s) {
         statusDiv.classList.add('hidden');
+        gameModeModal.classList.add('hidden');
         gameDiv.classList.remove('hidden');
 
         const playersEl = document.getElementById('players');
@@ -197,7 +236,11 @@
             const div = document.createElement('div');
             div.className = 'player';
             if (i === s.currentPlayer) div.classList.add('current-turn');
-            div.innerHTML = `<strong>${p.name}</strong><br>Matches: ${p.matches}<br>Questions Asked: ${p.asked || 0}/5`;
+            let playerText = `<strong>${p.name}</strong><br>Matches: ${p.matches}`;
+            if (gameHasQuestions) {
+                 playerText += `<br>Questions Asked: ${p.asked || 0}/5`;
+            }
+            div.innerHTML = playerText;
             playersEl.appendChild(div);
         });
 
