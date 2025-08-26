@@ -86,4 +86,197 @@
     </div>
 
     <div id="winner-modal" class="hidden">
-        <div class="modal-
+        <div class="modal-content">
+            <h2 id="winner-text"></h2>
+            <button id="play-again-btn">Play Again</button>
+        </div>
+    </div>
+
+    <div id="game-mode-modal" class="hidden">
+        <div class="modal-content">
+            <h2 id="game-mode-text">Play without questions?</h2>
+            <p>If either player chooses yes, questions will be disabled for this match.</p>
+            <button id="mode-yes-btn">Yes</button>
+            <button id="mode-no-btn">No, keep questions</button>
+        </div>
+    </div>
+
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<script>
+    const SOCKET_SERVER_URL = 'https://flippin-server.onrender.com';
+    let socket;
+    let gameHasQuestions = true; // Default to true
+
+    // --- DOM Elements ---
+    const loginScreen = document.getElementById('login-screen');
+    const statusDiv = document.getElementById('status');
+    const gameDiv = document.getElementById('game');
+    const joinButton = document.getElementById('join-game-btn');
+    const nameInput = document.getElementById('name-input');
+    const btnRematch = document.getElementById('btnRematch');
+    const winnerModal = document.getElementById('winner-modal');
+    const playAgainBtn = document.getElementById('play-again-btn');
+    const gameModeModal = document.getElementById('game-mode-modal');
+    const modeYesBtn = document.getElementById('mode-yes-btn');
+    const modeNoBtn = document.getElementById('mode-no-btn');
+
+    // --- Event Listeners ---
+    joinButton.addEventListener('click', () => {
+        const playerName = nameInput.value.trim();
+        if (!playerName) {
+            alert('Please enter your name!');
+            return;
+        }
+        loginScreen.classList.add('hidden');
+        statusDiv.classList.remove('hidden');
+        statusDiv.textContent = 'Connecting…';
+        connectToServer(playerName);
+    });
+    
+    btnRematch.onclick = () => socket.emit('rematch', {}, res => {
+        if (res && !res.ok && res.error) alert('Rematch failed: ' + res.error);
+    });
+
+    playAgainBtn.onclick = () => {
+        winnerModal.classList.add('hidden');
+        btnRematch.click();
+    };
+
+    modeYesBtn.onclick = () => {
+        socket.emit('setGameMode', { mode: 'no-questions' });
+        gameModeModal.classList.add('hidden');
+        statusDiv.textContent = 'Waiting for opponent…';
+    };
+
+    modeNoBtn.onclick = () => {
+        socket.emit('setGameMode', { mode: 'questions' });
+        gameModeModal.classList.add('hidden');
+        statusDiv.textContent = 'Waiting for opponent…';
+    };
+
+    // --- Socket Logic ---
+    function connectToServer(playerName) {
+        socket = io(SOCKET_SERVER_URL, {
+            query: { name: playerName },
+            transports: ['websocket', 'polling']
+        });
+
+        socket.on('connect_error', err => {
+            console.error('Connection error:', err);
+            statusDiv.textContent = 'Cannot connect to server.';
+        });
+
+        socket.on('connect', () => {
+            gameModeModal.classList.remove('hidden');
+            statusDiv.classList.remove('hidden');
+            statusDiv.textContent = 'Connected!';
+        });
+
+        // --- Game Event Handlers ---
+        socket.on('state', renderState);
+
+        socket.on('gameModeUpdated', ({ mode }) => {
+            gameHasQuestions = (mode === 'questions');
+        });
+
+        socket.on('timer', secs => {
+            document.getElementById('timer').textContent = `Time: ${formatTime(secs)}`;
+        });
+        
+        socket.on('gameOver', ({ winnerName, isTie }) => {
+            const winnerText = document.getElementById('winner-text');
+            if (isTie) {
+                winnerText.textContent = "Oops it's a tie!";
+            } else {
+                winnerText.textContent = `${winnerName} won!`;
+            }
+            winnerModal.classList.remove('hidden');
+            confetti({ particleCount: 150, spread: 90, origin: { y: 0.6 } });
+        });
+
+        socket.on('gameReset', () => {
+            winnerModal.classList.add('hidden');
+            gameModeModal.classList.remove('hidden'); // Ask again on rematch
+        });
+
+        socket.on('askQuestion', ({ remaining }) => {
+            if (gameHasQuestions) {
+                if (remaining > 0) {
+                    const q = prompt(`You found a match! Ask a question (${remaining} left):`);
+                    socket.emit('askQuestion', { text: q || '' });
+                } else {
+                    alert("You have no questions left!");
+                    socket.emit('answerQuestion', { text: '(skipped)' });
+                }
+            }
+        });
+
+        socket.on('questionForAnswer', ({ from, text }) => {
+            const ans = prompt(`${from} asks: "${text}". Your answer:`);
+            socket.emit('answerQuestion', { text: ans || '' });
+        });
+    }
+
+    // --- Rendering Logic ---
+    function renderState(s) {
+        statusDiv.classList.add('hidden');
+        gameModeModal.classList.add('hidden');
+        gameDiv.classList.remove('hidden');
+
+        const playersEl = document.getElementById('players');
+        playersEl.innerHTML = '';
+        s.players.forEach((p, i) => {
+            const div = document.createElement('div');
+            div.className = 'player';
+            if (i === s.currentPlayer) div.classList.add('current-turn');
+            let playerText = `<strong>${p.name}</strong><br>Matches: ${p.matches}`;
+            if (gameHasQuestions) {
+                 playerText += `<br>Questions Asked: ${p.asked || 0}/5`;
+            }
+            div.innerHTML = playerText;
+            playersEl.appendChild(div);
+        });
+
+        document.getElementById('pairsFound').textContent = `Pairs found: ${(s.players[0]?.matches||0) + (s.players[1]?.matches||0)} / 10`;
+
+        const boardEl = document.getElementById('board');
+        boardEl.innerHTML = '';
+        s.cards.forEach((c, idx) => {
+            const card = document.createElement('div');
+            card.className = 'card' + ((c.revealed || c.matched) ? ' revealed' : '');
+            card.innerHTML = `<div class="card-inner"><div class="back"></div><div class="face"><div class="emoji">${c.emoji}</div></div></div>`;
+            if (!c.revealed && !c.matched) {
+                card.addEventListener('click', () => {
+                    socket.emit('flip', { idx }, res => { if (res?.error) console.error(res.error); });
+                });
+            }
+            boardEl.appendChild(card);
+        });
+
+        const chatLogEl = document.getElementById('chat-log');
+        chatLogEl.innerHTML = '';
+        (s.chatLog || []).forEach(item => {
+            const d = document.createElement('div');
+            d.className = 'log-item';
+            d.innerHTML = `<strong>${item.by}:</strong> ${escapeHTML(item.text)}`;
+            chatLogEl.appendChild(d);
+        });
+        chatLogEl.scrollTop = chatLogEl.scrollHeight;
+    }
+
+    // --- Utility Functions ---
+    function formatTime(sec) {
+        const m = String(Math.floor(sec / 60)).padStart(2, '0');
+        const s = String(sec % 60).padStart(2, '0');
+        return `${m}:${s}`;
+    }
+
+    function escapeHTML(str) {
+        const div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+    }
+</script>
+</body>
+</html>
